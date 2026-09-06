@@ -51,6 +51,8 @@ fi
 # --no-folding is required, not cosmetic: without it stow turns ~/.vim into a
 # symlink to vim/.vim, and then plugged/ and undo/ cannot live inside it.
 echo "==> stow: ${PACKAGES[*]}"
-stow --no-folding -d "$REPO" -t "$HOME" "${STOW_ARGS[@]}" "${PACKAGES[@]}"
+# ${a[@]+"${a[@]}"} because macOS ships bash 3.2, where expanding an empty
+# array under `set -u` is an "unbound variable" error.
+stow --no-folding -d "$REPO" -t "$HOME" ${STOW_ARGS[@]+"${STOW_ARGS[@]}"} "${PACKAGES[@]}"
 
 echo "==> done"

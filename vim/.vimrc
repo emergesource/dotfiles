@@ -51,20 +51,50 @@ let g:UltiSnipsJumpBackwardTrigger="<s-tab>"
 
 
 " color stuff
-syntax on 
+syntax on
 set t_Co=256 " enable colours
-colorscheme nord
-hi Normal ctermbg=none
-highlight ColorColumn ctermbg=0
-highlight GitGutterAdd ctermfg=2
-highlight GitGutterChange ctermfg=3
-highlight GitGutterChangeDelete ctermfg=4
-highlight GitGutterDelete ctermfg=1
-highlight NonText ctermbg=none " Fix wrapline colour
-highlight clear SignColumn
-let g:lightline = {
-    \ 'colorscheme': 'nord',
-\ }
+
+" 24-bit colour. tmux advertises RGB via terminal-overrides, so themes render
+" as designed rather than being quantised to 256.
+if has('termguicolors') && ($COLORTERM =~# 'truecolor\|24bit' || $TERM =~# 'tmux\|256color')
+  set termguicolors
+  if !has('nvim')
+    " vim needs to be told the escape sequences for RGB inside tmux/screen.
+    let &t_8f = "\<Esc>[38;2;%lu;%lu;%lum"
+    let &t_8b = "\<Esc>[48;2;%lu;%lu;%lum"
+  endif
+endif
+
+" These overrides are theme-independent, so re-apply them after every
+" colorscheme change -- otherwise switching themes silently drops them.
+augroup ThemeOverrides
+  autocmd!
+  autocmd ColorScheme * highlight Normal  ctermbg=none guibg=NONE
+  autocmd ColorScheme * highlight NonText ctermbg=none guibg=NONE " Fix wrapline colour
+  autocmd ColorScheme * highlight ColorColumn ctermbg=0
+  autocmd ColorScheme * highlight GitGutterAdd          ctermfg=2 guifg=#a3be8c
+  autocmd ColorScheme * highlight GitGutterChange       ctermfg=3 guifg=#ebcb8b
+  autocmd ColorScheme * highlight GitGutterChangeDelete ctermfg=4 guifg=#81a1c1
+  autocmd ColorScheme * highlight GitGutterDelete       ctermfg=1 guifg=#bf616a
+  autocmd ColorScheme * highlight clear SignColumn
+augroup END
+
+let g:lightline = {}
+
+" `theme` writes ~/.config/theme/current/theme.vim, which owns both the
+" colorscheme and the matching lightline palette. Fall back to nord when no
+" theme has been installed yet (fresh machine).
+if filereadable(expand('~/.config/theme/current/theme.vim'))
+  source ~/.config/theme/current/theme.vim
+else
+  silent! runtime autoload/lightline/colorscheme/nord.vim
+  let g:lightline.colorscheme = 'nord'
+  silent! colorscheme nord
+endif
+
+" A running vim cannot be remote-controlled here (+clientserver but -X11), so
+" pick up theme changes when the pane regains focus. Needs tmux focus-events on.
+autocmd FocusGained * silent! source ~/.config/theme/current/theme.vim
 
 command! Maketags !ctags -R
 

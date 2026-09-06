@@ -118,7 +118,7 @@ alias speedtest="curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/m
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
-# export PATH=$PATH:~/bin
+export PATH=$PATH:~/bin
 # export PYENV_ROOT="$HOME/.pyenv"
 # command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
 # eval "$(pyenv init -)"
@@ -142,3 +142,10 @@ export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
 export PATH="$PATH:/Users/colin/.lmstudio/bin"
 # End of LM Studio CLI section
 
+
+# `theme` recolours iTerm2 with an escape sequence, which only affects the
+# current session -- a new window would otherwise start from the profile's
+# colours. Re-apply the active theme on startup. No-op outside iTerm2.
+if [[ -o interactive && "$LC_TERMINAL" == "iTerm2" ]] && command -v theme >/dev/null 2>&1; then
+  theme reapply
+fi
