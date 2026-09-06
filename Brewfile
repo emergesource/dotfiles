@@ -4,6 +4,7 @@ tap "homebrew/cask-versions"
 tap "homebrew/core"
 
 brew "git"
+brew "stow"
 brew "vim"
 brew "tmux"
 brew "pyenv"

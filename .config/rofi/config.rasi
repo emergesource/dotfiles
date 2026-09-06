@@ -1,7 +1,0 @@
-configuration {
- modi: "window,drun,ssh,combi";
- font: "hack 12";
- combi-modi: "drun,ssh";
- display-drun: ">";
- }
-@theme "nord"

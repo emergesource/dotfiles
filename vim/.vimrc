@@ -2,7 +2,7 @@ set nocompatible
 
 call plug#begin('~/.vim/plugged')
 Plug 'Raimondi/delimitMate'
-Plug 'SirVer/ultisnips'
+" Plug 'SirVer/ultisnips'
 Plug 'honza/vim-snippets'
 Plug 'Xuyuanp/nerdtree-git-plugin'
 Plug 'Yggdroot/indentLine'
@@ -18,7 +18,7 @@ Plug 'tpope/vim-surround'
 Plug 'christoomey/vim-tmux-navigator'
 Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
 Plug 'junegunn/fzf.vim'
-Plug 'neoclide/coc.nvim', {'branch': 'release'}
+" Plug 'neoclide/coc.nvim', {'branch': 'release'}
 Plug 'weirongxu/plantuml-previewer.vim'
 Plug 'tyru/open-browser.vim'
 Plug 'aklt/plantuml-syntax'
@@ -165,7 +165,7 @@ set mouse=
 set noerrorbells
 set nowrap
 set number
-set pastetoggle=<leader>p " toggle paste mode  (turns off auto indent)
+if !has('nvim') | set pastetoggle=<leader>p | endif  " nvim: option removed there; bracketed paste is native
 set ruler
 set runtimepath^=~/.vim/bundle/ctrlp.vim
 set shiftround
@@ -303,3 +303,10 @@ let g:coc_global_extensions = [
 \ ]
 
 set linespace=0
+" set clipboard=unnamedplus
+"
+if system('uname -s') == "Darwin\n"
+set clipboard=unnamed "OSX
+else
+  set clipboard=unnamedplus "Linux
+endif

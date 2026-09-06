@@ -1,9 +1,10 @@
 [user]
     name = Colin Campbell
-    email = colin@elusivelabs.com
+    email = colin@emergesource.com
 [core]
     editor = vim
     excludesfile = ~/.gitignore_global   
+	pager = delta
 [color]
     ui = true
 [alias]
@@ -18,3 +19,7 @@
 
 [pull]
     rebase = true
+[delta]
+	navigate = true
+	dark = true
+	side-by-side = false

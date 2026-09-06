@@ -15,6 +15,7 @@ export ZSH="/Users/colin/.oh-my-zsh"
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
+source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
 ZSH_THEME="powerlevel10k/powerlevel10k"
 
 # Set list of themes to pick from when loading at random
@@ -43,7 +44,7 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 # DISABLE_MAGIC_FUNCTIONS="true"
 
 # Uncomment the following line to disable colors in ls.
-# DISABLE_LS_COLORS="true"
+# DISABLE_LS_COLORS="false"
 
 # Uncomment the following line to disable auto-setting terminal title.
 # DISABLE_AUTO_TITLE="true"
@@ -76,6 +77,7 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 # Standard plugins can be found in $ZSH/plugins/
 # Custom plugins may be added to $ZSH_CUSTOM/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
+# G
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(git)
 
@@ -107,16 +109,36 @@ export EDITOR='vim'
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
-alias open="xdg-open"
+# alias open="xdg-open"
 alias agu="sudo apt update && sudo apt upgrade"
-alias docker="sudo docker"
+# alias docker="sudo docker"
 alias mux=tmuxinator
 alias speedtest="curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 -"
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 
-export PATH=$PATH:~/bin
-export PYENV_ROOT="$HOME/.pyenv"
-command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
+# export PATH=$PATH:~/bin
+# export PYENV_ROOT="$HOME/.pyenv"
+# command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
+# eval "$(pyenv init -)"
+export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
+# export DOCKER_HOST=unix://${HOME}/.colima/default/docker.sock
+#
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export PATH=$PATH:$ANDROID_HOME/emulator
+export PATH=$PATH:$ANDROID_HOME/tools
+export PATH=$PATH:$ANDROID_HOME/tools/bin
+export PATH=$PATH:$ANDROID_HOME/platform-tools
+export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+
+# enable vscode shell integration
+[[ "$TERM_PROGRAM" == "vscode" ]] && . "$(code --locate-shell-integration-path zsh)"
+
+export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
+# export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/colin/.lmstudio/bin"
+# End of LM Studio CLI section
+

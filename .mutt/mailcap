@@ -1,4 +1,0 @@
-text/html ; uconv --add-signature -f %{charset} -t UTF-8 %s | sponge %s && firefox -new-tab %s & sleep 5 ; description="HTML Document" ; test=test -n "$DISPLAY" ; nametemplate=%s.html
-text/html; w3m -I %{charset} -T text/html; copiousoutput;
-text/plain; vim %s
-image/*; feh --scale-down -d %s

@@ -1,6 +1,0 @@
-! fonts
-URxvt*font:				xft:MesloLGS NF:style=Regular:size=12
-URxvt*boldFont:			xft:MesloLGS NF:style=Bold:size=12
-URxvt*italicFont:		xft:MesloLGS NF:style=Italic:size=12
-URxvt*boldItalicFont:	xft:MesloLGS NF:e=Bold Italic:size=12
-
