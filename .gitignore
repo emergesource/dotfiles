@@ -1,5 +1,3 @@
-vim/plugged
-vim/undo
 .newsboat/cache.db
 .newsboat/history.cmdline
 .newsboat/history.search

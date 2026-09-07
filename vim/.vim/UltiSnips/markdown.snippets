@@ -37,3 +37,42 @@ endsnippet
 snippet td
 - [ ] [${1:owner}] ${2:description}
 endsnippet
+
+snippet thought
+### Activating Event 
+
+### Beliefs 
+
+### Consequences
+
+### Detective Work & Disputation
+#### Factual Evidence For My HOT Thought
+#### Factual Evidence Against My HOT Thought
+
+#### Disputation
+
+### End Result 
+#### Re-rate Emotion
+#### Re-rate Hot Thought 
+endsnippet
+
+snippet sleep
+### `date --date="yesterday" +%a\ %b\ %d\,\ %Y`
+
+| Question | Answer |
+|-|-|
+| 1. About what time did you go to bed? | ${1:bedtime} |
+| 2. About what time did you fall asleep? | ${2:sleeptime} | 
+| 3. In total, about how long were you up in the middle of the night? | ${3: elapsed} |
+| 4. What time was your final awakening? | ${4:awake} |
+| 5. What time did you get out of bed for the day? | ${5:up} |
+| __6. Time in Bed (#5 minus #1)__ | __${6:tib}__ |
+| __7. Total Time Asleep (#4 minus #2 minus #3)__ | __${7:tta}__ |
+| __8. Sleep Efficiency (Time Asleep % Time in Bed) * 100__ | __${8:se}__ |
+| 9. How would you rate the quality of  your sleep? (Very poor, Poor, Fair, Good, Very Good) | ${9:quality} |
+| 10. In total, how long did you nap or doze yesterday? | |
+
+#### Comments
+
+---
+endsnippet
