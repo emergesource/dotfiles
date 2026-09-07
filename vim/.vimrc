@@ -77,6 +77,7 @@ syntax on
 
 " editing
 set autoindent
+set autoread                             " reload files changed outside vim
 set backspace=indent,eol,start
 set encoding=utf-8
 set expandtab
@@ -155,6 +156,19 @@ augroup END
 augroup VimrcReload
   autocmd!
   autocmd BufWritePost .vimrc source $MYVIMRC
+augroup END
+
+" Notice files rewritten underneath us -- by an agent in another pane, a
+" rebase, a formatter. 'autoread' permits the reload but does not poll for it;
+" checktime is the trigger. FocusGained needs tmux `focus-events on`, which is
+" set in .tmux.conf. Without this the first sign of trouble is saving a stale
+" buffer over someone else's work.
+augroup AutoReload
+  autocmd!
+  autocmd FocusGained,BufEnter,CursorHold,CursorHoldI * silent! checktime
+  " Say so, rather than swapping the text out from under the cursor silently.
+  autocmd FileChangedShellPost * echohl WarningMsg
+        \ | echo 'Buffer reloaded — changed on disk' | echohl None
 augroup END
 
 " ======================================================== appearance ========
