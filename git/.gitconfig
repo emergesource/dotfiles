@@ -17,6 +17,11 @@
     ll = log --oneline --abbrev-commit --all --graph --decorate
     l = log --oneline --decorate
     up = "!git remote update -p; git merge --ff-only @{u}"
+    # squash-merge a branch, GitHub style: one commit, subject = branch
+    # name, body = the squashed commit subjects. Opens the editor so the
+    # subject can be fixed up. There is no merge.squash config -- git
+    # ignores it -- so this is the closest thing to a default.
+    sq = "!f() { git merge --squash \"$1\" && git commit --edit -m \"$1\" -m \"$(git log --reverse --format='* %s' HEAD..\"$1\")\"; }; f"
 
 [pull]
     rebase = true
