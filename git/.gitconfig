@@ -29,3 +29,10 @@
 	navigate = true
 	dark = true
 	side-by-side = false
+
+[rerere]
+    # Record how a conflict was resolved and replay it automatically the next
+    # time the same one appears -- which is what rebasing and repeated merges
+    # of a long-lived branch produce. Fewer markers ever reach the editor.
+    enabled = true
+    autoUpdate = true
