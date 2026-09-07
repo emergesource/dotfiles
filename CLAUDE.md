@@ -59,6 +59,50 @@ brew bundle          # macOS, reads ./Brewfile
 | `freespace.sh` | docker prune, brew cleanup, deletes stale `venv`/`node_modules` under `~/devel`. Destructive. |
 | `nameit` | random name generator; needs `/usr/share/dict/words` and `shuf`. |
 
+## Deriving colours from the theme
+
+`vim/.vim/autoload/colorkit.vim` holds the shared colour maths: `mix`, `lum`,
+`contrast`, `readable`, `attr`, `bg`, `first`. Use it instead of hardcoding hex
+values, so highlights follow `theme`.
+
+**The rule it exists to enforce:** under `termguicolors` vim uses `guifg`/`guibg`
+and ignores `ctermfg`/`ctermbg` completely. A highlight that sets only cterm
+attributes is inert. Two bugs came from exactly this — `ColorColumn ctermbg=0`
+left `guibg` unset, so every theme showed vim's default `DarkRed`; and the
+conflict labels styled with `DiffAdd` had no foreground, because no colorscheme
+defines a `fg` on that group. Always set the gui attribute.
+
+`g:colorcolumn_strength` (default `0.10`) controls how far the 80-column rule is
+nudged off the background — 0.0 invisible, 1.0 full foreground. It mixes toward
+the *foreground*, so it darkens on light themes and lightens on dark ones.
+
+## Merge conflicts
+
+`vim/.vim/plugin/conflicts.vim` is an inline conflict-resolution UI over
+`rhysd/conflict-marker.vim`, using VS Code's vocabulary. Everything happens in
+one buffer — no diff splits.
+
+- `,x` opens the Resolve Conflict menu (`c` Current, `i` Incoming, `b` Both,
+  `n` Discard, `j`/`k` navigate).
+- `:AcceptCurrentChange`, `:AcceptIncomingChange`, `:AcceptBothChanges`,
+  `:DiscardBothChanges`, `:NextConflict`, `:PrevConflict`, `:Conflicts`.
+- Virtual-text labels mark each block `(Current Change)` / `(Incoming Change)` /
+  `(Common Ancestor)`. vim only — nvim gets colours and the menu, since the
+  labels use text properties.
+
+Colours derive from the active theme's `DiffAdd` (green, Current) and
+`DiffText` (blue, Incoming), recomputed on `ColorScheme` so they follow `theme`.
+Each bar sets an explicit foreground chosen by WCAG luminance — **do not set a
+background without a foreground here**, which was the original bug: no theme
+defines a `fg` on `DiffAdd`, so label text was invisible. `:ContrastReport`
+prints the measured ratios; all bundled themes pass AA.
+
+Content blocks get only a 16% wash and no `guifg`, so syntax highlighting still
+reads through.
+
+`merge.conflictstyle` is unset, so there is no `(Common Ancestor)` block.
+`git config --global merge.conflictstyle zdiff3` enables it.
+
 ## Theming
 
 `bin/bin/theme` switches iTerm2, vim and tmux together. Run `theme` for a picker
@@ -90,13 +134,23 @@ so a new iTerm window would otherwise revert to the profile's colours.
 
 ## Editor
 
-`vim/.vimrc` is the single source of truth. `nvim/.config/nvim/init.vim` sources
+`vim/.vimrc` is the single source of truth, organised into labelled sections:
+plugins / built-ins / options / filetypes / appearance / plugin config /
+mappings / commands. Add new settings to the matching section. `nvim/.config/nvim/init.vim` sources
 it, so vim 9.1 and nvim 0.11 share one config.
 
 - `pastetoggle` is guarded with `if !has('nvim')` — nvim removed the option
   (E519). Both handle bracketed paste natively anyway.
 - nvim errors with `E5422` if `init.lua` and `init.vim` both exist. A previous
   LazyVim install is parked at `~/.config/nvim-archive-2026/nvim.lazyvim`.
+- **No LSP by design.** coc.nvim is not loaded; code intelligence is the agent's
+  job. `coc.nvim` and `ultisnips` are still in `~/.vim/plugged` and their Plug
+  lines are commented, so re-enabling either is a one-line edit — but a
+  `:PlugClean` would delete them from disk first.
+- vim 9.1 built-ins in use: `comment` (gc/gcc, replaced tcomment_vim),
+  `editorconfig`, and `osc52` — the last on Linux only, since macOS vim ignores
+  `clipmethod` and uses the native pasteboard.
+- Snippets are disabled but `.vim/UltiSnips/*.snippets` are kept.
 
 ## Plugin managers
 
@@ -112,19 +166,8 @@ it, so vim 9.1 and nvim 0.11 share one config.
 
 Carried over deliberately; reconciliation was kept behaviour-neutral.
 
-- **`.vimrc:127`** `nnoremap  :set nonumber!:set foldcolumn=0` — lost its LHS
-  (a raw `<C-n>`) and its `<CR>`s. It currently maps the normal-mode sequence
-  `:set`.
-- **`.vimrc:103`** `map <leader>c <c-_><c-_> " T-Comment Shortcut` — `map` has
-  no trailing-comment syntax, so the comment is part of the RHS.
-- **`.vimrc:85-88`** `map <C-h> <C-W>h` etc. override vim-tmux-navigator's own
-  mappings, breaking vim→tmux pane crossing.
-- **`undodir=$HOME/.vim/undo` does not exist**, so persistent undo silently
-  never writes. With `noswapfile`/`nobackup` there is no recovery net.
 - **`~/.gitignore_global` does not exist**, but `.gitconfig` `core.excludesfile`
-  and `g:ackprg` both point at it.
-- **coc.nvim and ultisnips are commented out** in `.vimrc`, so there is no LSP
-  or snippet support; the coc extensions are still installed on disk.
+  still points at it.
 - **lightline's palette autoload is broken here**: resolving
   `g:lightline#colorscheme#<name>#palette` raises E121, so lightline reported
   "Could not load colorscheme" and silently fell back to its default palette.
@@ -137,7 +180,6 @@ Carried over deliberately; reconciliation was kept behaviour-neutral.
   tmuxinator is not installed, though `.zshrc` still aliases `mux` to it.
 - `.zshrc` hardcodes `ZSH="/Users/colin/.oh-my-zsh"`.
 - `.gitignore` patterns `vim/plugged` / `vim/undo` do not match `.vim/plugged`.
-- `.vimrc` still has `au BufRead /tmp/mutt-*`; the mail stack was removed.
 - `Brewfile` lists `appcleaner` as a formula (it is a cask) and taps
   `homebrew/cask-versions`, which no longer exists — `brew bundle` aborts.
 
