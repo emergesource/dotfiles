@@ -70,6 +70,21 @@ changing theme if the images should match.
 SVG on purpose: it diffs sensibly in git, stays a few KB, and needs no binaries
 in the repo. `tools/` is repo infrastructure and is never stowed.
 
+## Files changing underneath you
+
+`.vimrc` sets `autoread` **and** an `AutoReload` augroup running `checktime` on
+`FocusGained`/`BufEnter`/`CursorHold`. Both halves are required: `autoread`
+permits a reload but never polls, so without `checktime` vim only notices on the
+next explicit command. `FocusGained` additionally needs tmux `focus-events on`,
+which `.tmux.conf` sets.
+
+Removing `autoread` does not disable this — it makes it *worse*. `checktime`
+then raises `W11` and prompts `[O]K, (L)oad File` on every external change.
+
+`history-limit` is 50000 because the 2000-line default is about one agent build
+log. `rerere.enabled` replays previous conflict resolutions, so repeated merges
+and rebases mostly resolve themselves before `conflicts.vim` sees them.
+
 ## Deriving colours from the theme
 
 `vim/.vim/autoload/colorkit.vim` holds the shared colour maths: `mix`, `lum`,
@@ -194,19 +209,15 @@ it, so vim 9.1 and nvim 0.11 share one config.
 
 ## Known issues
 
-Carried over deliberately; reconciliation was kept behaviour-neutral.
+Everything previously listed here has been fixed. Two deliberate choices remain,
+so they are not bugs:
 
-- **`~/.gitignore_global` does not exist**, but `.gitconfig` `core.excludesfile`
-  still points at it.
-- `.vim/.vimrc` is a dead 210-line fork that vim never reads.
-- `.vim/UltiSnips/UltiSnips/` is a nested duplicate; both are loaded and the two
-  `markdown.snippets` have diverged.
-- `.config/tmuxinator/` is stale (references `/home/colin`, rails, a `venv`) and
-  tmuxinator is not installed, though `.zshrc` still aliases `mux` to it.
-- `.zshrc` hardcodes `ZSH="/Users/colin/.oh-my-zsh"`.
-- `.gitignore` patterns `vim/plugged` / `vim/undo` do not match `.vim/plugged`.
-- `Brewfile` lists `appcleaner` as a formula (it is a cask) and taps
-  `homebrew/cask-versions`, which no longer exists — `brew bundle` aborts.
+- **No LSP.** coc.nvim is not loaded; the agent does code intelligence. `coc` and
+  `ultisnips` keep commented `Plug` lines so either is a one-line re-enable.
+- **tpm is not installed**, so the `@plugin` lines in `.tmux.conf` are inert.
+  Little is lost: `escape-time`, `mode-keys` and `status-keys` already hold the
+  values `tmux-sensible` would set. `tmux-yank` and `tmux-better-mouse-mode` are
+  what you would actually gain by cloning tpm to `~/.tmux/plugins/tpm`.
 
 ## Secrets
 
