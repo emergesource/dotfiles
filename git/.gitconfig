@@ -10,6 +10,7 @@
 [alias]
     co = checkout
     st = status
+    s = status --short --branch
     ci = commit
     br = branch
     pr = pull --rebase
