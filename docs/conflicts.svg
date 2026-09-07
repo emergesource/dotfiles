@@ -80,15 +80,15 @@
 <text x="14.0" y="327.0" fill="#9ece6a" xml:space="preserve"> +  </text>
 <text x="45.2" y="327.0" fill="#7aa2f7" xml:space="preserve">}</text>
 <text x="14.0" y="344.0" fill="#0000ff" xml:space="preserve">~</text>
-<rect x="14.0" y="348.0" width="62.4" height="17.0" fill="#98c379"/>
-<rect x="76.4" y="348.0" width="85.8" height="17.0" fill="#3e4452"/>
-<rect x="162.2" y="348.0" width="460.2" height="17.0" fill="#2c323d"/>
-<rect x="622.4" y="348.0" width="46.8" height="17.0" fill="#3e4452"/>
-<rect x="669.2" y="348.0" width="46.8" height="17.0" fill="#98c379"/>
-<text x="14.0" y="361.0" fill="#282c34" font-weight="bold" xml:space="preserve"> NORMAL </text>
-<text x="76.4" y="361.0" fill="#abb2bf" xml:space="preserve"> deploy.sh </text>
-<text x="162.2" y="361.0" fill="#abb2bf" xml:space="preserve">                                         unix | utf-8 | sh </text>
-<text x="622.4" y="361.0" fill="#abb2bf" xml:space="preserve">  23% </text>
-<text x="669.2" y="361.0" fill="#282c34" font-weight="bold" xml:space="preserve">   4:4</text>
+<rect x="14.0" y="348.0" width="62.4" height="17.0" fill="#7aa2f7"/>
+<rect x="76.4" y="348.0" width="70.2" height="17.0" fill="#3e4153"/>
+<rect x="146.6" y="348.0" width="522.6" height="17.0" fill="#313342"/>
+<rect x="669.2" y="348.0" width="46.8" height="17.0" fill="#3e4153"/>
+<text x="14.0" y="361.0" fill="#000000" font-weight="bold" xml:space="preserve"> NORMAL </text>
+<text x="76.4" y="361.0" fill="#c0caf5" xml:space="preserve">  master </text>
+<text x="146.6" y="361.0" fill="#c0caf5" xml:space="preserve">deploy.sh                                     </text>
+<text x="505.4" y="361.0" fill="#8087a6" xml:space="preserve"> unix utf-8 sh </text>
+<text x="622.4" y="361.0" fill="#c0caf5" xml:space="preserve">  23% </text>
+<text x="669.2" y="361.0" fill="#c0caf5" xml:space="preserve">   4:4</text>
 <text x="14.0" y="378.0" fill="#c0caf5" xml:space="preserve">&quot;deploy.sh&quot; 17L, 240B</text>
 </svg>

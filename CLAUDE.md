@@ -87,6 +87,25 @@ defines a `fg` on that group. Always set the gui attribute.
 nudged off the background — 0.0 invisible, 1.0 full foreground. It mixes toward
 the *foreground*, so it darkens on light themes and lightens on dark ones.
 
+## Statusline
+
+`vim/.vim/plugin/statusline.vim` is a native statusline — no plugin. It replaced
+lightline, which could only match a theme when one of its 37 bundled palettes
+shared the theme's name; for the other ~570 upstream themes it silently fell
+back to `one`.
+
+Mode colours come from `colorkit#palette()`, which reads the ANSI values out of
+`~/.config/theme/current/palette.sh`. ANSI 1–6 mean red/green/yellow/blue/
+magenta/cyan in every theme, so the mapping holds for all 606 without a lookup
+table. Bar backgrounds are the editor background mixed a step toward the
+foreground; mode-block foregrounds are chosen by `colorkit#readable()`.
+
+Active and inactive windows are swapped with `WinEnter`/`WinLeave` autocmds
+setting a window-local `statusline`, rather than `g:statusline_winid`, which is
+only populated during real statusline evaluation.
+
+`set noshowmode` is deliberate — the mode block already says it.
+
 ## Merge conflicts
 
 `vim/.vim/plugin/conflicts.vim` is an inline conflict-resolution UI over
@@ -179,11 +198,6 @@ Carried over deliberately; reconciliation was kept behaviour-neutral.
 
 - **`~/.gitignore_global` does not exist**, but `.gitconfig` `core.excludesfile`
   still points at it.
-- **lightline's palette autoload is broken here**: resolving
-  `g:lightline#colorscheme#<name>#palette` raises E121, so lightline reported
-  "Could not load colorscheme" and silently fell back to its default palette.
-  Pre-existing; worked around by `runtime`-ing the palette file explicitly in
-  the generated `theme.vim`.
 - `.vim/.vimrc` is a dead 210-line fork that vim never reads.
 - `.vim/UltiSnips/UltiSnips/` is a nested duplicate; both are loaded and the two
   `markdown.snippets` have diverged.

@@ -97,3 +97,49 @@ endfunction
 function! colorkit#is_dark() abort
   return colorkit#lum(colorkit#bg()) < 0.5
 endfunction
+
+" The active theme's 16-colour ANSI palette plus bg/fg, read from the file
+" `theme` generates. This is exact for every upstream theme, where guessing
+" from highlight groups is not -- Statement/Keyword vary wildly between
+" colorschemes, but ANSI 1..6 always mean red/green/yellow/blue/magenta/cyan.
+"
+" Falls back to deriving from Diff* groups when no theme is installed.
+let s:palette_cache = {}
+
+function! colorkit#palette() abort
+  let l:file = expand('~/.config/theme/current/palette.sh')
+  let l:stamp = getftime(l:file)
+  if has_key(s:palette_cache, 'stamp') && s:palette_cache.stamp == l:stamp
+    return s:palette_cache.data
+  endif
+
+  let l:p = {'ansi': []}
+  if filereadable(l:file)
+    let l:vals = {}
+    for l:line in readfile(l:file)
+      let l:m = matchlist(l:line, "^\\(\\w\\+\\)='\\?\\([0-9a-fA-F]\\{6}\\)'\\?")
+      if !empty(l:m) | let l:vals[l:m[1]] = '#' . l:m[2] | endif
+    endfor
+    let l:p.bg = get(l:vals, 'BG', colorkit#bg())
+    let l:p.fg = get(l:vals, 'FG', colorkit#fg())
+    for l:i in range(16)
+      call add(l:p.ansi, get(l:vals, 'ANSI' . l:i, ''))
+    endfor
+  endif
+
+  if empty(l:p.ansi) || empty(l:p.ansi[4])
+    " no palette file: approximate from the theme's diff colours
+    let l:p.bg = colorkit#bg()
+    let l:p.fg = colorkit#fg()
+    let l:red   = colorkit#first([['DiffDelete', 'bg']], '#bf616a')
+    let l:green = colorkit#first([['DiffAdd', 'bg']], '#a3be8c')
+    let l:yell  = colorkit#first([['DiffChange', 'bg']], '#ebcb8b')
+    let l:blue  = colorkit#first([['DiffText', 'bg']], '#81a1c1')
+    let l:p.ansi = ['#3b4252', l:red, l:green, l:yell, l:blue, '#b48ead',
+          \ '#88c0d0', l:p.fg, '#4c566a', l:red, l:green, l:yell, l:blue,
+          \ '#b48ead', '#8fbcbb', l:p.fg]
+  endif
+
+  let s:palette_cache = {'stamp': l:stamp, 'data': l:p}
+  return l:p
+endfunction

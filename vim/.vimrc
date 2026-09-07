@@ -7,8 +7,8 @@
 "   plugins / built-ins / options / filetypes / appearance / plugin config /
 "   mappings / commands
 "
-" Colours are not set here: `theme` owns the colorscheme and the lightline
-" palette. See the appearance section.
+" Colours are not set here: `theme` owns the colorscheme, and the statusline
+" colours itself from the same palette. See the appearance section.
 
 set nocompatible
 let mapleader = ","
@@ -37,7 +37,6 @@ Plug 'tpope/vim-fugitive'
 Plug 'airblade/vim-gitgutter'
 
 " interface
-Plug 'itchyny/lightline.vim'
 Plug 'ryanoasis/vim-devicons'
 Plug 'arcticicestudio/nord-vim'         " fallback scheme when `theme` has none
 
@@ -207,16 +206,12 @@ augroup ThemeOverrides
   autocmd ColorScheme * call <SID>ThemeOverrides()
 augroup END
 
-let g:lightline = {}
-
-" `theme` writes ~/.config/theme/current/theme.vim, which owns both the
-" colorscheme and the matching lightline palette. Fall back to nord when no
-" theme has been installed yet (fresh machine).
+" `theme` writes ~/.config/theme/current/theme.vim, which owns the colorscheme.
+" The statusline is native -- see .vim/plugin/statusline.vim -- and colours
+" itself from the same palette. Fall back to nord on a fresh machine.
 if filereadable(expand('~/.config/theme/current/theme.vim'))
   source ~/.config/theme/current/theme.vim
 else
-  silent! runtime autoload/lightline/colorscheme/nord.vim
-  let g:lightline.colorscheme = 'nord'
   silent! colorscheme nord
 endif
 

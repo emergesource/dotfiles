@@ -57,6 +57,10 @@ theme list            # what's installed
 
 ![theme palette preview](docs/theme-swatch.svg)
 
+The vim statusline is native — no plugin — and takes its mode colours from the
+same palette, so it matches every theme rather than only the handful a
+statusline plugin ships palettes for.
+
 Themes come from
 [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes), which
 publishes a palette and a vim colorscheme per theme. The tmux status theme is
