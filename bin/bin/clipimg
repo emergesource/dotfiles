@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# clipimg -- save the image on the clipboard to a file and print its path.
+#
+# For pasting screenshots into tools that take a file path but cannot read an
+# image off the clipboard themselves. By default the path is also copied to the
+# clipboard, so the next paste inserts it as text.
+#
+#   clipimg              save to ~/.cache/clipimg/<timestamp>.png, copy path
+#   clipimg shot.png     save to a specific file
+#   clipimg -n           do not touch the clipboard, just print the path
+#
+set -euo pipefail
+
+COPY_PATH=1
+if [ "${1:-}" = "-n" ]; then COPY_PATH=0; shift; fi
+
+OUT="${1:-}"
+if [ -z "$OUT" ]; then
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/clipimg"
+    mkdir -p "$dir"
+    OUT="$dir/$(date +%Y%m%d-%H%M%S).png"
+fi
+mkdir -p "$(dirname "$OUT")"
+
+case "$(uname -s)" in
+Darwin)
+    # `clipboard info` lists the flavours currently held; PNGf is what a
+    # screenshot or a copied image provides.
+    if ! osascript -e 'clipboard info' 2>/dev/null | grep -q 'class PNGf'; then
+        echo "clipimg: no image on the clipboard" >&2
+        exit 1
+    fi
+    osascript -e 'set png to (the clipboard as «class PNGf»)' \
+              -e "set f to open for access POSIX file \"$OUT\" with write permission" \
+              -e 'write png to f' \
+              -e 'close access f' >/dev/null
+    ;;
+Linux)
+    if command -v wl-paste >/dev/null 2>&1; then
+        wl-paste --type image/png > "$OUT"
+    elif command -v xclip >/dev/null 2>&1; then
+        xclip -selection clipboard -t image/png -o > "$OUT"
+    else
+        echo "clipimg: need wl-paste or xclip" >&2
+        exit 1
+    fi
+    [ -s "$OUT" ] || { echo "clipimg: no image on the clipboard" >&2; rm -f "$OUT"; exit 1; }
+    ;;
+*)
+    echo "clipimg: unsupported platform" >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -s "$OUT" ]; then
+    echo "clipimg: wrote nothing" >&2
+    rm -f "$OUT"
+    exit 1
+fi
+
+if [ "$COPY_PATH" -eq 1 ]; then
+    # Safe to replace the clipboard: the image is already on disk.
+    printf '%s' "$OUT" | (command -v pbcopy >/dev/null 2>&1 && pbcopy \
+        || command -v wl-copy >/dev/null 2>&1 && wl-copy \
+        || xclip -selection clipboard) 2>/dev/null || true
+fi
+
+printf '%s\n' "$OUT"

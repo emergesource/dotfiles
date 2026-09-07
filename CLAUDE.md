@@ -58,6 +58,7 @@ brew bundle          # macOS, reads ./Brewfile
 | `backup.sh` | rsync `~` to `$DEST`. **Run from the repo root** — `--exclude-from=".rsyncignore"` is relative. `DEST` is a block of commented per-machine paths; uncomment the right one. Note `~` is now full of symlinks; the real content is backed up via `~/devel/dotfiles`. |
 | `freespace.sh` | docker prune, brew cleanup, deletes stale `venv`/`node_modules` under `~/devel`. Destructive. |
 | `nameit` | random name generator; needs `/usr/share/dict/words` and `shuf`. |
+| `clipimg` | save the clipboard image to a file and print (and copy) its path, for tools that take a path but cannot read an image off the clipboard. macOS via `osascript`, Linux via `wl-paste`/`xclip`. |
 
 ## Deriving colours from the theme
 
