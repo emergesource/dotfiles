@@ -1,0 +1,23 @@
+# Global gitignore, referenced by core.excludesfile in .gitconfig.
+#
+# Setting core.excludesfile overrides git's XDG default, so this file replaces
+# ~/.config/git/ignore rather than adding to it. The .claude rule below came
+# from there -- while this file was missing, core.excludesfile pointed at
+# nothing and no global ignores applied at all.
+
+# agent/editor local state, never shared
+**/.claude/settings.local.json
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
+
+# build noise that escapes project gitignores
+tags
+*.pyc
+__pycache__/
