@@ -56,8 +56,47 @@ brew bundle          # macOS, reads ./Brewfile
 | Script | Notes |
 |--------|-------|
 | `backup.sh` | rsync `~` to `$DEST`. **Run from the repo root** — `--exclude-from=".rsyncignore"` is relative. `DEST` is a block of commented per-machine paths; uncomment the right one. Note `~` is now full of symlinks; the real content is backed up via `~/devel/dotfiles`. |
-| `freespace.sh` | docker prune, brew cleanup, deletes stale `venv`/`node_modules` under `~/devel`. Destructive. |
+| `freespace.sh` | **Dry run by default** — reports what it would free; `-f` reclaims. Xcode archives older than `ARCHIVE_DAYS` (90) and DerivedData, `simctl delete unavailable`, docker prune, brew/npm/gradle/deno/CocoaPods caches, `node_modules`/`venv` under `~/devel` older than `STALE_DAYS` (120), Trash. Ends with a report of the largest directories it *won't* touch, plus memory. See below. |
 | `nameit` | random name generator; needs `/usr/share/dict/words` and `shuf`. |
+
+## Reclaiming disk space
+
+`freespace.sh` is destructive, so it does nothing until given `-f`. Run it bare
+first: the report is useful on its own, and the total it prints covers only the
+paths it sizes directly — `brew cleanup`, `docker system prune` and
+`simctl delete unavailable` show `?` because their yield can't be measured up
+front.
+
+**`docker system prune` does not free space on macOS.** `Docker.raw` is a
+sparse disk image; pruning frees space *inside* the Linux VM while the host
+file stays the size of its high-water mark. Shrinking it needs Docker Desktop's
+own reclaim, or `fstrim` inside the VM — the script prints both. This is why
+the old version appeared to do so much and reclaimed so little.
+
+The two knobs are age cutoffs, and both are proxies. `ARCHIVE_DAYS` (90) is the
+only safe filter for `.xcarchive` bundles, since they carry the dSYMs that
+symbolicate crash reports from builds still in the wild — raise it if an old
+release is still shipping. `STALE_DAYS` (120) tests directory `mtime`, which
+only moves when entries are added or removed, so a dependency tree you read
+from constantly but never install into still looks stale.
+
+Two `find` traps this script has to work around, both of which silently
+produced *no* matches in the previous version:
+
+- `-name "venv|env"` is a glob, not an alternation. Use `\( -name venv -o -name env \)`.
+- Piping to `xargs rm -rf` splits paths on whitespace, and BSD `xargs` runs the
+  command even on empty input. Use `-print0` into a `while IFS= read -r -d ''`
+  loop.
+
+A third trap, which bit while writing the replacement: under `set -euo
+pipefail`, `du` exiting 1 on a single unreadable directory kills the whole
+script, and `sort | head` dies of SIGPIPE for the same reason. Every reporting
+pipeline is wrapped in `{ ...; || true; }` on purpose — a partial size total is
+the intended behaviour, not a bug.
+
+`#!/usr/bin/env bash`, not `sh`: the script uses arrays, `[[ ]]` and `pipefail`.
+It ran under `sh` only because macOS `/bin/sh` is bash in sh-mode; dash would
+have rejected it.
 
 ## Screenshots
 
