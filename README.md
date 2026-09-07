@@ -55,6 +55,8 @@ theme set nord        # apply an installed theme
 theme list            # what's installed
 ```
 
+![theme palette preview](docs/theme-swatch.svg)
+
 Themes come from
 [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes), which
 publishes a palette and a vim colorscheme per theme. The tmux status theme is
@@ -77,6 +79,22 @@ Notes:
 - Requires `allow-passthrough on` and `focus-events on` in tmux; both are set in
   `.tmux.conf`. Truecolor (`tmux-256color` + `RGB`) is enabled so themes render
   as designed rather than being quantised to 256 colours.
+
+### Merge conflicts
+
+Resolved inline, in one buffer — no diff splits — using VS Code's vocabulary.
+
+![resolving a merge conflict in vim](docs/conflicts.svg)
+
+```
+,x                     the Resolve Conflict menu
+]x  [x                 next / previous conflict
+:AcceptCurrentChange   :AcceptIncomingChange
+:AcceptBothChanges     :DiscardBothChanges
+```
+
+Colours are derived from the active theme, with foregrounds picked by WCAG
+contrast, so the labels stay readable whatever `theme` is set to.
 
 ### Packages
 

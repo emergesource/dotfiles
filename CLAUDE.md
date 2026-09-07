@@ -59,6 +59,17 @@ brew bundle          # macOS, reads ./Brewfile
 | `freespace.sh` | docker prune, brew cleanup, deletes stale `venv`/`node_modules` under `~/devel`. Destructive. |
 | `nameit` | random name generator; needs `/usr/share/dict/words` and `shuf`. |
 
+## Screenshots
+
+`docs/*.svg` are generated, not hand-captured. `./tools/make-screenshots.sh`
+runs the real tools in a detached tmux session, captures the pane with
+`capture-pane -e`, and renders the ANSI to SVG via `tools/ansi2svg.py`. They
+pick up the colours of whatever theme is currently active, so regenerate after
+changing theme if the images should match.
+
+SVG on purpose: it diffs sensibly in git, stays a few KB, and needs no binaries
+in the repo. `tools/` is repo infrastructure and is never stowed.
+
 ## Deriving colours from the theme
 
 `vim/.vim/autoload/colorkit.vim` holds the shared colour maths: `mix`, `lum`,
