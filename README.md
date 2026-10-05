@@ -100,6 +100,23 @@ Resolved inline, in one buffer — no diff splits — using VS Code's vocabulary
 Colours are derived from the active theme, with foregrounds picked by WCAG
 contrast, so the labels stay readable whatever `theme` is set to.
 
+### Checking logs
+
+`logsweep` reads recent macOS logs and reports things worth a look. It changes
+nothing.
+
+```bash
+logsweep                      # last 24h, every family
+logsweep --since 7d           # wider window
+logsweep --family auth,waste  # auth, persist, stability, waste
+logsweep --lines 10           # offending lines per finding (default 3, 0 for none)
+```
+
+Every finding shows where it came from — the file, or for the unified log a
+`log show` command to paste — then its most recent offending lines with
+timestamps, and what to check. A section it could not read says `could not check` rather than
+`no findings`. macOS only for now.
+
 ### Packages
 
 ```bash

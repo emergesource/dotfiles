@@ -58,6 +58,7 @@ brew bundle          # macOS, reads ./Brewfile
 | `backup.sh` | rsync `~` to `$DEST`. **Run from the repo root** — `--exclude-from=".rsyncignore"` is relative. `DEST` is a block of commented per-machine paths; uncomment the right one. Note `~` is now full of symlinks; the real content is backed up via `~/devel/dotfiles`. |
 | `freespace.sh` | **Dry run by default** — reports what it would free; `-f` reclaims. Xcode archives older than `ARCHIVE_DAYS` (90) and DerivedData, `simctl delete unavailable`, docker prune, brew/npm/gradle/deno/CocoaPods caches, `node_modules`/`venv` under `~/devel` older than `STALE_DAYS` (120), Trash. Ends with a report of the largest directories it *won't* touch, plus memory. See below. |
 | `nameit` | random name generator; needs `/usr/share/dict/words` and `shuf`. |
+| `logsweep` | **Read-only, macOS only.** Curated checks over recent logs: failed sudo/login, new launchd plists, crontab changes, installs, crash reports, respawn loops, jetsam events. `--since 7d`, `--family auth,waste`, `--lines N` (offending lines per finding, default 3). Python 3.9+ stdlib. See below. |
 
 ## Reclaiming disk space
 
@@ -97,6 +98,62 @@ the intended behaviour, not a bug.
 `#!/usr/bin/env bash`, not `sh`: the script uses arrays, `[[ ]]` and `pipefail`.
 It ran under `sh` only because macOS `/bin/sh` is bash in sh-mode; dash would
 have rejected it.
+
+## Checking logs
+
+`logsweep` is stateless: every finding comes from a rule in the `RULES` or
+`PROBES` list in the script, and nothing is remembered between runs. Tests:
+`python3 tools/test_logsweep.py` (run it under `/usr/bin/python3` too — that
+one is 3.9).
+
+**Every rule is written against a real captured line**, kept scrubbed in
+`tools/fixtures/logsweep/`. Do not add a rule from documentation or memory:
+capture the line first. Rules that had no real example on the machine they were
+written on were dropped rather than guessed — sshd logins, kernel panics,
+unclean shutdowns, disk I/O errors and thermal throttling. Add them when a real
+line turns up.
+
+Five things about `log show` shaped the design:
+
+- **`<private>` cannot be recovered.** About a quarter of log lines carry
+  redacted fields. Rules match on process, subsystem, category and the fixed
+  parts of the message; the failed-login rule reports the *reporting process*
+  as its subject because the account name is redacted.
+- **Scope every predicate by `process` or `subsystem`.** A 10-minute unfiltered
+  query is 275 MB. `process == "kernel"` costs over a minute per 24h, which is
+  why jetsam is read from `JetsamEvent-*.ips` reports instead. A test enforces
+  the scoping.
+- **A message-only match fires on itself.** `log` records its own invocation,
+  quoting the predicate. Match functions check the process as well as the text.
+- **The log is shorter than `--last` implies.** Default-level messages are in
+  `/var/db/diagnostics/Persist`, which held about 28 hours on the machine this
+  was written on; `--last 7d` returned the same events as `--last 24h`. The
+  first unfiltered event is no guide, since errors are kept for weeks in a
+  separate store. The AUTH section notes when the oldest Persist file is
+  younger than the window.
+- **One failure is several lines.** A failed `opendirectoryd` verification logs
+  three lines within 300 ms, and a lock-state change produces two of those 10 s
+  apart with nobody typing. `burst_seconds` on a rule collapses such a run into
+  one occurrence before the threshold is applied.
+
+launchd throttling is not in the unified log at all; it is in
+`/var/log/com.apple.xpc.launchd/launchd.log`, which rotates by size and may
+hold only a few hours. The report says how far back it could see.
+
+`log` is also a zsh builtin. Reproduce a query by hand with `/usr/bin/log`.
+
+The test loader sets `sys.dont_write_bytecode`: `bin/bin/` is stowed, and a
+`__pycache__` there would be symlinked into `~/bin`.
+
+Each finding prints a `source:` line and its most recent lines with
+millisecond timestamps. The source line is deliberately never clipped to the
+terminal width: for a log finding it is a `/usr/bin/log show` command meant to
+be pasted. Sub-second timestamps are what distinguish a machine burst from a
+person typing.
+
+Persistence findings are a hygiene signal, not a security control — they test
+`mtime`, which is trivially backdated. A family that could not be read prints
+`could not check`, never `no findings`.
 
 ## Screenshots
 

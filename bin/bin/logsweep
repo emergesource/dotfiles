@@ -1,0 +1,863 @@
+#!/usr/bin/env python3
+"""logsweep - report things worth a look in recent macOS system logs.
+
+Read-only. Checks four families of curated rules and prints one report:
+
+  auth       failed sudo and login/unlock attempts
+  persist    new launchd plists, crontab changes, package installs
+  stability  crash and diagnostic reports
+  waste      respawn loops, out-of-memory events, repeat crashers
+
+  logsweep                     # last 24h, every family
+  logsweep --since 7d          # wider window (Nm, Nh or Nd)
+  logsweep --family auth,waste # only these families
+  logsweep --lines 10          # offending lines shown per finding (default 3)
+
+A family that could not be read says "could not check"; it never says
+"no findings". Exit status is 0 for a completed run, 2 for an error.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
+
+FAMILIES = ("auth", "persist", "stability", "waste")
+DEFAULT_SINCE = "24h"
+DEFAULT_LINES = 3
+
+_DURATION = re.compile(r"^([1-9][0-9]*)([mhd])$")
+_UNIT_SECONDS = {"m": 60, "h": 3600, "d": 86400}
+
+
+def parse_duration(text):
+    """'30m' / '24h' / '7d' -> seconds. Raises ValueError otherwise."""
+    m = _DURATION.match(text)
+    if not m:
+        raise ValueError("expected a duration like 30m, 24h or 7d, got %r" % text)
+    return int(m.group(1)) * _UNIT_SECONDS[m.group(2)]
+
+
+def _duration_arg(text):
+    try:
+        return parse_duration(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+
+
+def _family_arg(text):
+    chosen = [f.strip() for f in text.split(",") if f.strip()]
+    unknown = [f for f in chosen if f not in FAMILIES]
+    if unknown or not chosen:
+        raise argparse.ArgumentTypeError(
+            "expected a comma-separated subset of %s, got %r" % (",".join(FAMILIES), text))
+    return [f for f in FAMILIES if f in chosen]
+
+
+def _lines_arg(text):
+    if not text.isdigit():
+        raise argparse.ArgumentTypeError("expected a whole number, 0 or more, got %r" % text)
+    return int(text)
+
+
+def parse_args(argv):
+    # The module docstring is the help text, so the two cannot drift apart.
+    p = argparse.ArgumentParser(
+        prog="logsweep", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--since", type=_duration_arg, default=parse_duration(DEFAULT_SINCE),
+                   metavar="DURATION", help="window for log rules (default %s)" % DEFAULT_SINCE)
+    p.add_argument("--family", type=_family_arg, default=list(FAMILIES),
+                   metavar="LIST", help="comma-separated subset of " + ",".join(FAMILIES))
+    p.add_argument("--lines", type=_lines_arg, default=DEFAULT_LINES, metavar="N",
+                   help="offending lines shown per finding (default %d)" % DEFAULT_LINES)
+    p.add_argument("--no-color", action="store_true", help="disable ANSI colour")
+    return p.parse_args(argv)
+
+
+# --- records ---------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Event:
+    timestamp: datetime
+    process: str
+    pid: int
+    subsystem: str
+    category: str
+    event_type: str
+    message: str
+
+
+TS_FORMAT = "%Y-%m-%d %H:%M:%S.%f%z"
+
+
+def parse_event(line):
+    """One ndjson line -> Event. None for blank lines and log's own trailer
+    ({"count":N,"finished":1}); ValueError for anything malformed."""
+    line = line.strip()
+    if not line:
+        return None
+    rec = json.loads(line)  # JSONDecodeError is a ValueError
+    if not isinstance(rec, dict):
+        raise ValueError("not a JSON object")
+    if "finished" in rec and "timestamp" not in rec:
+        return None
+    try:
+        ts = datetime.strptime(rec["timestamp"], TS_FORMAT)
+    except (KeyError, TypeError) as e:
+        raise ValueError("no usable timestamp: %s" % e)
+    return Event(
+        timestamp=ts,
+        process=os.path.basename(rec.get("processImagePath") or ""),
+        pid=int(rec.get("processID") or 0),
+        subsystem=rec.get("subsystem") or "",
+        category=rec.get("category") or "",
+        event_type=rec.get("eventType") or "",
+        message=rec.get("eventMessage") or "",
+    )
+
+
+# --- log source ------------------------------------------------------------
+
+# Absolute path: `log` is also a zsh builtin, and PATH is not ours to trust.
+LOG_BIN = "/usr/bin/log"
+LOG_TIMEOUT = 120
+# Default-level messages live here and are the first to be aged out; on a busy
+# Mac this store holds little more than a day, whatever --last asks for.
+LOG_STORE = "/var/db/diagnostics/Persist"
+
+
+class SourceError(Exception):
+    """A source could not be read. The message is shown to the user."""
+
+
+class MacLogSource:
+    def __init__(self, popen=subprocess.Popen, timeout=LOG_TIMEOUT, store=LOG_STORE):
+        self._popen = popen
+        self._timeout = timeout
+        self._store = store
+        self.skipped = 0
+
+    def earliest(self):
+        """Roughly how far back the log reaches: when the oldest file in the
+        store was last written. None if that cannot be determined."""
+        try:
+            times = [os.stat(os.path.join(self._store, name)).st_mtime
+                     for name in os.listdir(self._store) if name.endswith(".tracev3")]
+        except OSError:
+            return None
+        return datetime.fromtimestamp(min(times)).astimezone() if times else None
+
+    def events(self, predicate, since_seconds):
+        cmd = [LOG_BIN, "show", "--style", "ndjson",
+               "--last", "%dm" % max(1, since_seconds // 60),
+               "--predicate", predicate]
+        # stderr goes to a file, not a pipe: nothing drains it while stdout is
+        # being read, and a full pipe would stall the child.
+        with tempfile.TemporaryFile("w+") as err:
+            try:
+                proc = self._popen(cmd, stdout=subprocess.PIPE, stderr=err,
+                                   text=True, errors="replace")
+            except OSError as e:
+                raise SourceError("%s: %s" % (LOG_BIN, e.strerror or e))
+            timed_out = []
+
+            def expire():
+                timed_out.append(True)
+                proc.kill()
+
+            timer = threading.Timer(self._timeout, expire)
+            timer.start()
+            try:
+                for line in proc.stdout:
+                    try:
+                        ev = parse_event(line)
+                    except ValueError:
+                        self.skipped += 1
+                        continue
+                    if ev is not None:
+                        yield ev
+                code = proc.wait()
+            finally:
+                timer.cancel()
+                if proc.poll() is None:  # Ctrl-C or an abandoned generator
+                    proc.kill()
+                    proc.wait()
+            if timed_out:
+                raise SourceError("log show timed out after %ss" % self._timeout)
+            if code != 0:
+                err.seek(0)
+                reason = next((l.strip() for l in err
+                               if l.strip() and not l.lstrip().startswith("{")), "")
+                raise SourceError(("log show exited %d: %s" % (code, reason)).rstrip(": "))
+
+
+# --- rules -----------------------------------------------------------------
+
+SEVERITIES = ("high", "medium", "info")
+
+
+@dataclass(frozen=True)
+class Finding:
+    rule_id: str
+    family: str
+    severity: str
+    title: str
+    subject: str
+    count: int
+    first_seen: Optional[datetime]
+    last_seen: Optional[datetime]
+    sample: str
+    advice: str
+    source: str = ""        # the file it came from, or a command that shows it
+    evidence: Tuple[Tuple[datetime, str], ...] = ()  # offending lines, oldest first
+
+
+@dataclass(frozen=True)
+class Rule:
+    id: str
+    family: str
+    severity: str
+    title: str
+    predicate: str                              # source-side filter for `log show`
+    match: Callable[[Event], Optional[str]]     # subject, or None
+    advice: str
+    threshold: Optional[Tuple[int, int]] = None  # (count, window_minutes) per subject
+    weight: Optional[Callable[[Event], int]] = None  # occurrences one event stands for
+    burst_seconds: Optional[float] = None       # lines this close together are one occurrence
+
+
+def reaches(stamps, count, window_minutes):
+    """True if any span of window_minutes holds at least `count` occurrences.
+    stamps is a list of (datetime, weight)."""
+    stamps = sorted(stamps, key=lambda s: s[0])
+    window = timedelta(minutes=window_minutes)
+    start = total = 0
+    for end in range(len(stamps)):
+        total += stamps[end][1]
+        while stamps[end][0] - stamps[start][0] > window:
+            total -= stamps[start][1]
+            start += 1
+        if total >= count:
+            return True
+    return False
+
+
+def collapse(stamps, seconds):
+    """Merge each run of stamps spaced no more than `seconds` apart into its first."""
+    out, previous = [], None
+    for when, weight in sorted(stamps, key=lambda s: s[0]):
+        if previous is None or (when - previous).total_seconds() > seconds:
+            out.append((when, weight))
+        previous = when
+    return out
+
+
+def clean(text):
+    """One printable line. File names and log messages are not ours: a newline
+    or an escape sequence in one could forge or erase lines of the report."""
+    return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii")
+                   for ch in " ".join(text.split()))
+
+
+def make_finding(rule_like, subject, stamps, sample, source="", evidence=()):
+    """Build a Finding from anything with id/family/severity/title/advice."""
+    times = [s[0] for s in stamps]
+    return Finding(
+        rule_id=rule_like.id, family=rule_like.family, severity=rule_like.severity,
+        title=rule_like.title, subject=clean(subject), count=sum(s[1] for s in stamps),
+        first_seen=min(times) if times else None,
+        last_seen=max(times) if times else None,
+        sample=clean(sample), advice=rule_like.advice, source=clean(source),
+        evidence=tuple((when, clean(text))
+                       for when, text in sorted(evidence, key=lambda e: e[0])))
+
+
+class Matches:
+    """Accumulates only what matched, so the event stream is never buffered."""
+
+    def __init__(self):
+        self._stamps = {}   # (rule id, subject) -> [(datetime, weight)]
+        self._sample = {}   # (rule id, subject) -> first matching message
+        self._lines = {}    # (rule id, subject) -> [(datetime, message)]
+
+    def add(self, rule, event):
+        subject = rule.match(event)
+        if subject is None:
+            return
+        key = (rule.id, subject)
+        weight = rule.weight(event) if rule.weight else 1
+        self._stamps.setdefault(key, []).append((event.timestamp, weight))
+        self._sample.setdefault(key, event.message)
+        self._lines.setdefault(key, []).append((event.timestamp, event.message))
+
+    def findings(self, rule, source=""):
+        out = []
+        for (rule_id, subject), stamps in self._stamps.items():
+            if rule_id != rule.id:
+                continue
+            if rule.burst_seconds:
+                stamps = collapse(stamps, rule.burst_seconds)
+            if rule.threshold and not reaches(stamps, *rule.threshold):
+                continue
+            key = (rule_id, subject)
+            out.append(make_finding(rule, subject, stamps, self._sample[key],
+                                    source, self._lines[key]))
+        return out
+
+
+def family_predicate(rules):
+    return " OR ".join("(%s)" % r.predicate for r in rules)
+
+
+# Every pattern below was written against a real line captured from a Mac; the
+# lines are in tools/fixtures/logsweep/. Match functions check the process or
+# subsystem as well as the message: `log` records its own invocation, quoting
+# the predicate, so a message-only match fires on the query about itself.
+
+# sudo writes one line per failed invocation, carrying the attempt count.
+_SUDO_FAIL = re.compile(r"^\s*(\S+) : (\d+) incorrect password attempts? ;")
+
+
+def _sudo_failure_user(event):
+    if event.process != "sudo":
+        return None
+    m = _SUDO_FAIL.match(event.message)
+    return m.group(1) if m else None
+
+
+def _sudo_failure_attempts(event):
+    m = _SUDO_FAIL.match(event.message)
+    return int(m.group(2)) if m else 1
+
+
+def _login_failure(event):
+    # The account is <private> in both messages, so the subject is the reporter.
+    if (event.subsystem == "com.apple.opendirectoryd" and event.category == "auth"
+            and event.message.startswith("Authentication failed")):
+        return event.process
+    if (event.subsystem == "com.apple.Authorization"
+            and event.message.startswith("Failed to authenticate user")):
+        return event.process
+    return None
+
+
+RULES = [
+    Rule(
+        id="auth.sudo-failure", family="auth", severity="high",
+        title="sudo authentication failures",
+        predicate='process == "sudo" AND eventType == logEvent '
+                  'AND eventMessage CONTAINS "incorrect password attempt"',
+        match=_sudo_failure_user, weight=_sudo_failure_attempts,
+        threshold=(3, 10),
+        advice="was that you? the sample shows the TTY, directory and command"),
+    Rule(
+        id="auth.login-failure", family="auth", severity="medium",
+        title="failed login/unlock attempts",
+        predicate='(subsystem == "com.apple.opendirectoryd" AND category == "auth" '
+                  'AND eventMessage BEGINSWITH "Authentication failed") '
+                  'OR (subsystem == "com.apple.Authorization" '
+                  'AND eventMessage BEGINSWITH "Failed to authenticate user")',
+        # One failed verification logs three lines within 300 ms, and a lock
+        # state change produces two of those 10 s apart with nobody typing.
+        match=_login_failure, threshold=(5, 10), burst_seconds=2,
+        advice="the account is redacted; line the times up with what you were doing"),
+]
+
+
+# --- probes ----------------------------------------------------------------
+
+PERSIST_MIN_WINDOW = 7 * 86400  # a 24h mtime window misses anything between runs
+
+
+class ProbeError(Exception):
+    """A probe could not read its source. The message is shown to the user."""
+
+
+@dataclass
+class Context:
+    now: datetime            # timezone-aware
+    since: int               # seconds
+    home: str
+    root: str = "/"          # tests point this at a temporary directory
+    notes: Dict[str, List[str]] = field(default_factory=dict)
+
+    def path(self, *parts):
+        return os.path.join(self.root, *[p.lstrip("/") for p in parts])
+
+    def cutoff(self):
+        return self.now - timedelta(seconds=self.since)
+
+    def persist_cutoff(self):
+        return self.now - timedelta(seconds=max(self.since, PERSIST_MIN_WINDOW))
+
+    def note(self, family, text):
+        self.notes.setdefault(family, []).append(text)
+
+    def local(self, naive):
+        return naive.replace(tzinfo=self.now.tzinfo)
+
+    def show(self, path):
+        """A path as the report prints it, with the home directory as ~."""
+        home = self.home.rstrip("/")
+        if home and (path == home or path.startswith(home + "/")):
+            return "~" + path[len(home):]
+        return path
+
+
+def _mtime(path, tz):
+    return datetime.fromtimestamp(os.lstat(path).st_mtime, tz)
+
+
+def _listdir(directory):
+    """Names in a directory; [] if it does not exist; ProbeError if unreadable."""
+    try:
+        return sorted(os.listdir(directory))
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        raise ProbeError("%s: %s" % (directory, (e.strerror or str(e)).lower()))
+
+
+def recent_files(dirs, cutoff):
+    """(path, mtime) for entries modified at or after cutoff."""
+    out = []
+    for d in dirs:
+        for name in _listdir(d):
+            path = os.path.join(d, name)
+            try:
+                when = _mtime(path, cutoff.tzinfo)
+            except OSError:
+                continue  # vanished between listing and stat
+            if when >= cutoff:
+                out.append((path, when))
+    return out
+
+
+@dataclass(frozen=True)
+class CrashReport:
+    process: str
+    kind: str
+    when: datetime
+    path: str
+
+
+# Real shapes: "Name-2026-09-28-001725.ips" (user) and
+# "name_2026-09-30-133324_host.cpu_resource.diag" (system).
+_REPORT_STAMP = re.compile(r"^(?P<process>.+?)[-_]\d{4}-\d{2}-\d{2}-\d{6}(?P<rest>.*)$")
+_KIND_PART = re.compile(r"^[A-Za-z_]+$")
+
+
+def _report_identity(name):
+    """(process, kind) from a report file name. A name without the usual
+    timestamp is reported under its stem rather than dropped."""
+    m = _REPORT_STAMP.match(name)
+    if not m:
+        stem, ext = os.path.splitext(name)
+        return stem, ext.lstrip(".")
+    kind = []
+    # After the stamp come an optional sequence or host name, then the kind;
+    # take the trailing dotted words and stop at anything with digits in it.
+    for part in reversed(m.group("rest").split(".")[1:]):
+        if not _KIND_PART.match(part):
+            break
+        kind.insert(0, part)
+    return m.group("process"), ".".join(kind)
+
+
+def crash_reports(dirs, cutoff):
+    out = []
+    for path, when in recent_files(dirs, cutoff):
+        name = os.path.basename(path)
+        if name.startswith(".") or not os.path.isfile(path):
+            continue  # .DS_Store; the Retired/ and DiagnosticLogs/ directories
+        process, kind = _report_identity(name)
+        out.append(CrashReport(process, kind, when, path))
+    return out
+
+
+def _report_dirs(ctx):
+    rel = "Library/Logs/DiagnosticReports"
+    return [os.path.join(ctx.home, rel), ctx.path(rel)]
+
+
+def _read_lines(path):
+    """Lines of a text file; [] if absent; ProbeError if unreadable."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                yield line
+    except FileNotFoundError:
+        return
+    except OSError as e:
+        raise ProbeError("%s: %s" % (path, (e.strerror or str(e)).lower()))
+
+
+@dataclass(frozen=True)
+class Probe:
+    id: str
+    family: str
+    severity: str
+    title: str
+    advice: str
+    run: Callable  # (Probe, Context) -> List[Finding]; may raise ProbeError
+
+
+def _probe_launchd_plists(probe, ctx):
+    rel = "Library/LaunchAgents"
+    dirs = [os.path.join(ctx.home, rel), ctx.path(rel), ctx.path("Library/LaunchDaemons")]
+    return [make_finding(probe, os.path.basename(path), [(when, 1)], path, ctx.show(path))
+            for path, when in recent_files(dirs, ctx.persist_cutoff())]
+
+
+def _probe_crontab(probe, ctx):
+    # The directory is root-only, but its own mtime is readable and moves
+    # whenever a crontab is installed or removed.
+    tabs = ctx.path("usr/lib/cron/tabs")
+    try:
+        when = datetime.fromtimestamp(os.stat(tabs).st_mtime, ctx.now.tzinfo)
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        raise ProbeError("%s: %s" % (tabs, (e.strerror or str(e)).lower()))
+    if when < ctx.persist_cutoff():
+        return []
+    return [make_finding(probe, "/usr/lib/cron/tabs", [(when, 1)],
+                         "a crontab was installed or removed", ctx.show(tabs))]
+
+
+# Real lines: 2026-10-01 15:47:15-04 host installd[847]: Installed "TestFlight" (4.4.0)
+#             2026-09-30 04:57:31-04 host system_installd[849]: Installed "XProtect…" (5363)
+_INSTALL_STAMP = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[+-]\d{2} ")
+UNRECOGNISED = "%s: unrecognised format, no line could be read"
+_INSTALLED = re.compile(
+    r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})([+-]\d{2}) \S+ (?:system_)?installd\[\d+\]: '
+    r'Installed "(.+)" \((.*)\)\s*$')
+
+
+def _probe_installs(probe, ctx):
+    cutoff = ctx.persist_cutoff()
+    seen = {}  # name -> ([(when, 1)], latest sample, [(when, line)])
+    path = ctx.path("var/log/install.log")
+    lines = stamped = 0
+    for line in _read_lines(path):
+        lines += 1
+        stamped += bool(_INSTALL_STAMP.match(line))
+        m = _INSTALLED.match(line)
+        if not m:
+            continue
+        when = datetime.strptime(m.group(1) + m.group(2) + "00", "%Y-%m-%d %H:%M:%S%z")
+        if when < cutoff:
+            continue
+        stamps, _, lines_for = seen.get(m.group(3), ([], "", []))
+        text = 'Installed "%s" (%s)' % (m.group(3), m.group(4))
+        stamps.append((when, 1))
+        lines_for.append((when, text))
+        seen[m.group(3)] = (stamps, text, lines_for)
+    if lines and not stamped:  # the format changed; silence here would read as "clean"
+        raise ProbeError(UNRECOGNISED % path)
+    return [make_finding(probe, name, stamps, sample, ctx.show(path), lines_for)
+            for name, (stamps, sample, lines_for) in seen.items()]
+
+
+REPEAT_CRASHES = 3
+JETSAM_REPORT = "JetsamEvent"
+
+
+def _crashes_by_process(ctx):
+    by = {}
+    for r in crash_reports(_report_dirs(ctx), ctx.cutoff()):
+        by.setdefault(r.process, []).append(r)
+    return by
+
+
+def _crash_finding(probe, ctx, process, reports):
+    newest = max(reports, key=lambda r: r.when)
+    stamps = [(r.when, 1) for r in reports]
+    if len(reports) == 1:  # the source line already names the one file
+        return make_finding(probe, process, stamps, os.path.basename(newest.path),
+                            ctx.show(newest.path))
+    return make_finding(probe, process, stamps, os.path.basename(newest.path),
+                        ctx.show(os.path.dirname(newest.path)),
+                        [(r.when, os.path.basename(r.path)) for r in reports])
+
+
+def _probe_crash_reports(probe, ctx):
+    return [_crash_finding(probe, ctx, p, rs) for p, rs in _crashes_by_process(ctx).items()
+            if p != JETSAM_REPORT and len(rs) < REPEAT_CRASHES]
+
+
+def _probe_repeat_crashers(probe, ctx):
+    return [_crash_finding(probe, ctx, p, rs) for p, rs in _crashes_by_process(ctx).items()
+            if p != JETSAM_REPORT and len(rs) >= REPEAT_CRASHES]
+
+
+def _probe_jetsam(probe, ctx):
+    reports = _crashes_by_process(ctx).get(JETSAM_REPORT)
+    return [_crash_finding(probe, ctx, "system memory", reports)] if reports else []
+
+
+RESPAWN_THRESHOLD = (3, 60)
+# Real line: 2026-10-04 20:45:16.695608 (gui/501/com.apple.x) <Notice>: Service
+# only ran for 0 seconds. Pushing respawn out by 10 seconds.
+_LAUNCHD_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+) \(([^)]*)\) <\w+>: (.*)$")
+_LAUNCHD_TS = "%Y-%m-%d %H:%M:%S.%f"
+
+
+def _probe_respawn_loops(probe, ctx):
+    directory = ctx.path("var/log/com.apple.xpc.launchd")
+    names = [n for n in _listdir(directory) if n.startswith("launchd.log")]
+    cutoff = ctx.cutoff()
+    earliest = None
+    lines = 0
+    by_service = {}  # service -> ([(when, 1)], sample, [(when, line)], [file])
+    for name in names:
+        path = os.path.join(directory, name)
+        for line in _read_lines(path):
+            lines += 1
+            m = _LAUNCHD_LINE.match(line)
+            if not m:
+                continue
+            when = ctx.local(datetime.strptime(m.group(1), _LAUNCHD_TS))
+            if earliest is None or when < earliest:
+                earliest = when
+            if when < cutoff or not m.group(3).startswith("Service only ran for"):
+                continue
+            stamps, sample, lines_for, files = by_service.get(
+                m.group(2), ([], m.group(3), [], []))
+            stamps.append((when, 1))
+            lines_for.append((when, m.group(3)))
+            if path not in files:
+                files.append(path)
+            by_service[m.group(2)] = (stamps, sample, lines_for, files)
+    if lines and earliest is None:
+        raise ProbeError(UNRECOGNISED % os.path.join(directory, "launchd.log"))
+    if earliest is not None and earliest > cutoff:
+        ctx.note(probe.family, "launchd.log only goes back to %s (rotated by size)"
+                 % earliest.strftime("%m-%d %H:%M"))
+    return [make_finding(probe, service, stamps, sample,
+                         ", ".join(ctx.show(f) for f in files), lines_for)
+            for service, (stamps, sample, lines_for, files) in by_service.items()
+            if reaches(stamps, *RESPAWN_THRESHOLD)]
+
+
+PROBES = [
+    Probe("persist.launchd-plist", "persist", "medium",
+          "launchd plist modified (hygiene signal)",
+          "expected updater? mtime can be backdated, so absence proves nothing",
+          _probe_launchd_plists),
+    Probe("persist.crontab", "persist", "medium",
+          "crontab added, replaced or removed (hygiene signal)",
+          "crontab -l; sudo ls -l /usr/lib/cron/tabs",
+          _probe_crontab),
+    Probe("persist.install", "persist", "info",
+          "package installed",
+          "did you install or update this?",
+          _probe_installs),
+    Probe("stability.crash-report", "stability", "info",
+          "crash or diagnostic report",
+          "open the report in Console.app (Crash Reports / Log Reports)",
+          _probe_crash_reports),
+    Probe("waste.respawn-loop", "waste", "medium",
+          "launchd service in a respawn loop",
+          "launchctl print <service> shows why it keeps exiting",
+          _probe_respawn_loops),
+    Probe("waste.jetsam", "waste", "medium",
+          "out-of-memory (jetsam) event",
+          "the report lists memory use per process at the time",
+          _probe_jetsam),
+    Probe("waste.repeat-crasher", "waste", "medium",
+          "same process produced %d+ reports" % REPEAT_CRASHES,
+          "it is failing repeatedly; update, reconfigure or remove it",
+          _probe_repeat_crashers),
+]
+
+
+# --- engine ----------------------------------------------------------------
+
+@dataclass
+class FamilyResult:
+    family: str
+    findings: List[Finding]
+    errors: List[str]    # sources that could not be read
+    notes: List[str]
+    read_ok: int         # sources that were read
+
+
+def run_family(family, source, ctx, rules=None, probes=None):
+    rules = [r for r in (RULES if rules is None else rules) if r.family == family]
+    probes = [p for p in (PROBES if probes is None else probes) if p.family == family]
+    findings, errors, read_ok = [], [], 0
+    if rules:
+        matches = Matches()
+        try:
+            for event in source.events(family_predicate(rules), ctx.since):
+                for r in rules:
+                    matches.add(r, event)
+        except SourceError as e:
+            errors.append(str(e))  # a partial read is not reported as findings
+        else:
+            read_ok += 1
+            for r in rules:
+                # The unified log has no file to point at; give the query instead.
+                findings.extend(matches.findings(
+                    r, "unified log · %s show --last %s --predicate '%s'"
+                    % (LOG_BIN, _since_label(ctx.since), r.predicate)))
+            # A quiet result only means something for the span the log covers.
+            reach = source.earliest()
+            if reach is None:
+                ctx.note(family, "could not tell how far back the unified log goes")
+            elif reach > ctx.cutoff():
+                ctx.note(family, "unified log only goes back to about %s"
+                         % reach.strftime("%m-%d %H:%M"))
+    for p in probes:
+        try:
+            findings.extend(p.run(p, ctx))
+        except ProbeError as e:
+            errors.append(str(e))
+        else:
+            read_ok += 1
+    findings.sort(key=lambda f: (SEVERITIES.index(f.severity), -f.count, f.subject))
+    return FamilyResult(family, findings, errors, list(ctx.notes.get(family, [])), read_ok)
+
+
+# --- report ----------------------------------------------------------------
+
+FAMILY_TITLES = {"auth": "AUTH", "persist": "PERSISTENCE",
+                 "stability": "STABILITY", "waste": "WASTE"}
+_COLORS = {"high": "31", "medium": "33", "info": "36"}
+_BOLD, _DIM = "1", "2"
+
+
+def _paint(text, code, color):
+    return "\033[%sm%s\033[0m" % (code, text) if color else text
+
+
+def _clip(text, width):
+    return text if len(text) <= width else text[:max(0, width - 1)] + "…"
+
+
+def _when(first, last):
+    if first is None:
+        return ""
+    fmt = "%m-%d %H:%M"
+    if last is None or first == last:
+        return first.strftime(fmt)
+    if first.date() == last.date():
+        return "%s → %s" % (first.strftime(fmt), last.strftime("%H:%M"))
+    return "%s → %s" % (first.strftime(fmt), last.strftime(fmt))
+
+
+def _plural(n, one, many):
+    return "%d %s" % (n, one if n == 1 else many)
+
+
+def _stamp(when):
+    text = when.strftime("%m-%d %H:%M:%S")
+    return text + ".%03d" % (when.microsecond // 1000) if when.microsecond else text
+
+
+def render(results, host, since_label, now, skipped, color, width, max_lines):
+    lines = [_paint(_clip("logsweep — %s — last %s — %s"
+                          % (host, since_label, now.strftime("%Y-%m-%d %H:%M")), width),
+                    _BOLD, color)]
+    for res in results:
+        lines += ["", _paint(FAMILY_TITLES[res.family], _BOLD, color)]
+        for f in res.findings:
+            row = "  %-7s %s    %s    x%d   %s" % (
+                f.severity.upper(), f.title, f.subject, f.count, _when(f.first_seen, f.last_seen))
+            if len(row) > width:  # shorten the subject, keep the count and times
+                over = len(row) - width
+                subject = _clip(f.subject, max(1, len(f.subject) - over))
+                row = "  %-7s %s    %s    x%d   %s" % (
+                    f.severity.upper(), f.title, subject, f.count,
+                    _when(f.first_seen, f.last_seen))
+            lines.append(_paint(_clip(row.rstrip(), width), _COLORS[f.severity], color))
+            if f.source:  # never clipped: for a log finding it is a command to paste
+                lines.append(_paint("          source: " + f.source, _DIM, color))
+            shown = f.evidence[-max_lines:] if max_lines else ()
+            for when, text in shown:
+                lines.append(_paint(_clip("          %s  %s" % (_stamp(when), text), width),
+                                    _DIM, color))
+            hidden = len(f.evidence) - len(shown)
+            if shown and hidden:
+                lines.append(_paint("          … " + _plural(hidden, "more line", "more lines"),
+                                    _DIM, color))
+            lines.append(_paint(_clip("          check:  " + f.advice, width), _DIM, color))
+        for e in res.errors:
+            lines.append(_paint(_clip("  could not check: " + e, width), _COLORS["medium"], color))
+        for n in res.notes:
+            lines.append(_clip("  note: " + n, width))
+        if not res.findings and not res.errors:
+            lines.append("  no findings")
+    counts = {s: 0 for s in SEVERITIES}
+    for res in results:
+        for f in res.findings:
+            counts[f.severity] += 1
+    unchecked = sum(1 for res in results if res.errors)
+    summary = "Summary: %d high, %d medium, %d info · %s could not be checked · %s skipped" % (
+        counts["high"], counts["medium"], counts["info"],
+        _plural(unchecked, "family", "families"), _plural(skipped, "line", "lines"))
+    lines += ["", _clip(summary, width), ""]
+    return "\n".join(lines)
+
+
+def _since_label(seconds):
+    # One day reads as "24h", matching the default as the user typed it.
+    if seconds > 86400 and seconds % 86400 == 0:
+        return "%dd" % (seconds // 86400)
+    if seconds % 3600 == 0:
+        return "%dh" % (seconds // 3600)
+    return "%dm" % (seconds // 60)
+
+
+def main(argv=None, source=None, ctx=None, platform=sys.platform, out=None):
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    real_stdout = out is None
+    out = sys.stdout if real_stdout else out
+    if platform != "darwin":
+        print("logsweep: %s is not supported yet" % platform, file=sys.stderr)
+        return 2
+    source = MacLogSource() if source is None else source
+    if ctx is None:
+        ctx = Context(now=datetime.now().astimezone(), since=args.since,
+                      home=os.path.expanduser("~"))
+    else:
+        ctx.since = args.since
+    try:
+        results = [run_family(f, source, ctx) for f in args.family]
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
+    color = (not args.no_color) and hasattr(out, "isatty") and out.isatty()
+    width = shutil.get_terminal_size((100, 24)).columns
+    report = render(results, socket.gethostname().split(".")[0], _since_label(args.since),
+                    ctx.now, source.skipped, color, width, args.lines)
+    try:
+        out.write(report)
+        out.flush()
+    except BrokenPipeError:
+        # `logsweep | head`: the reader left. Point stdout at /dev/null so the
+        # interpreter's exit-time flush does not complain either.
+        if real_stdout:
+            try:
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            except (OSError, ValueError):
+                pass
+        return 0
+    if all(res.read_ok == 0 and res.errors for res in results):
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

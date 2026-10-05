@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-03 19:28:52.330295-0400","processImagePath":"/usr/bin/sudo","processID":80828,"subsystem":"","category":"","eventType":"logEvent","eventMessage":"   alice : a password is required ; TTY=ttys000 ; PWD=/Users/alice ; USER=root ; COMMAND=list"}
+{"timestamp":"2026-10-05 07:33:55.028232-0400","processImagePath":"/usr/bin/sudo","processID":31112,"subsystem":"","category":"","eventType":"logEvent","eventMessage":"   alice : 1 incorrect password attempt ; PWD=/Users/alice/devel/dotfiles ; USER=root ; COMMAND=/usr/bin/true"}
